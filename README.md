@@ -2,7 +2,7 @@
 
 ## Overview
 
-![rankkbqa-over](.\figs\rankkbqa-over.png)
+![rankkbqa-over](./figs/rankkbqa-over.png)
 
 ## Preliminary Setup
 
