@@ -13,7 +13,7 @@ import itertools
 from simcse import SimCSE
 import shutil
 
-model = SimCSE("/home/shishuhan/models/unsup-simcse-roberta-large")
+model = SimCSE("unsup-simcse-roberta-large")
 
 
 def is_number(t):
