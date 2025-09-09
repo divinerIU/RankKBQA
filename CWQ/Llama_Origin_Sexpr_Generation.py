@@ -153,41 +153,40 @@ class Chat_Llama_Generator:
     def clear_non_system_history(self):
         self.history = [entry for entry in self.history if entry['role'] == "System"]
 
-    def generate_response(self, prompt: str, max_length: int = 11288):
-
+    def generate_response(self, prompt: str, max_length: int = 8192):
+        """
+        生成对话的响应。
+        :param num_return_sequences: 生成响应数量
+        :param prompt: 当前的用户输入。
+        :param max_length: 生成的最大长度。
+        :return: 生成的响应。
+        """
+        # 将当前输入加入历史并生成模型输入
         self.add_to_history(prompt, sender="User")
-        # full_prompt = "\n".join(self.history)
 
-        inputs = self.tokenizer.apply_chat_template(
-            self.history,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_tensors="pt",
-            return_dict=True
-        ).to(self.device)
-        gen_kwargs = {
-            "max_new_tokens": max_length,
-            "do_sample": True,
-            "temperature": 0.70,
-            "top_k": 50,
-            "top_p": 0.7,
-            "num_return_sequences": 3,
-        }
-        with torch.no_grad():
+        # 编码输入
+        text = self.tokenizer.apply_chat_template(self.history, tokenize=False, add_generation_prompt=True)
+        inputs = self.tokenizer([text], return_tensors='pt').to(self.device)
 
-            responses = self.model.generate(**inputs, **gen_kwargs)
+        # 生成响应
+        attention_mask = torch.ones(inputs.input_ids.shape, dtype=torch.long, device=self.device)
+        generated_ids = self.model.generate(
+            inputs.input_ids,
+            max_new_tokens=max_length,
+            attention_mask=attention_mask,
+            pad_token_id=self.tokenizer.eos_token_id,
+        )
 
-            input_length = inputs['input_ids'].shape[1]
+        generated_response_ids = generated_ids[:, inputs.input_ids.shape[1]:]
+        response = self.tokenizer.decode(generated_response_ids[0], skip_special_tokens=True)
+        response = process_logical_form(response)
+        response = normed_process_cwq(response)
 
-            decoded_responses = []
-            for response in responses:
-                response = response[input_length:]
-                decoded_text = self.tokenizer.decode(response, skip_special_tokens=True)
-                processed_response = extract_logical_form(decoded_text)
-                spaced_response = normed_process_cwq(processed_response)
-                decoded_responses.append(spaced_response)
+        # 将模型响应加入历史
+        self.add_to_history(response, sender="Llama")
 
-        return decoded_responses
+        return response
+
 
 
 def get_model_prompt(nlp, corpus, question, bm25_train_full, que_to_s_dict_train, retrieve_number=40):

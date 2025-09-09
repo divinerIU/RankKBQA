@@ -102,25 +102,19 @@ def extract_logical_form(text):
     return ""
 
 
-def normed_process_cwq(expression):
+def normed_process_webqsp(expression):
     # Function to process content within square brackets
-
-    special_map_dev_file = "data/CWQ/generation/special_map/CWQ_special_map.json"
-    with open(special_map_dev_file, 'r', encoding='utf-8') as file:
-        comma_values = json.load(file)
-    special_map_list = [entry['value'] for entry in comma_values if entry['value'].count(',') >= 2]
-
     def replace_match(match):
         content = match.group(0)[1:-1]  # Remove the square brackets
 
         # Check if the content has 2 or more commas, implying it's a relation
-        if content.count(',') >= 2 and content.strip() not in special_map_list:
+        if content.count(',') >= 2:
             # Add spaces around commas for relations
             processed_content = content.replace(",", " , ")
             return f"[ {processed_content} ]"
         else:
-            # Leave entity content unchanged
-            return match.group(0)
+            # For entities, add spaces around the content
+            return f"[ {content} ]"
 
     # Replace content inside square brackets based on the condition
     processed_expression = re.sub(r'\[.*?\]', replace_match, expression)
@@ -151,37 +145,33 @@ class Chat_Llama_Generator:
     def clear_non_system_history(self):
         self.history = [entry for entry in self.history if entry['role'] == "System"]
 
-    def generate_response(self, prompt: str, max_length: int = 11288):
+    def generate_response(self, prompt: str, max_length: int = 8192):
+        # 将当前输入加入历史并生成模型输入
         self.add_to_history(prompt, sender="User")
-        # full_prompt = "\n".join(self.history)
-        inputs = self.tokenizer.apply_chat_template(
-            self.history,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_tensors="pt",
-            return_dict=True
-        ).to(self.device)
 
-        gen_kwargs = {
-            "max_new_tokens": max_length,
-            "do_sample": True,
-            "temperature": 0.70,
-            "top_k": 50,
-            "top_p": 0.7,
-            "num_return_sequences": 3,
-        }
-        with torch.no_grad():
-            responses = self.model.generate(**inputs, **gen_kwargs)
-            input_length = inputs['input_ids'].shape[1]
-            decoded_responses = []
-            for response in responses:
-                response = response[input_length:]
-                decoded_text = self.tokenizer.decode(response, skip_special_tokens=True)
-                print(decoded_text)
-                processed_response = extract_logical_form(decoded_text)
-                spaced_response = normed_process_cwq(processed_response)
-                decoded_responses.append(spaced_response)
-        return decoded_responses
+        # 编码输入
+        text = self.tokenizer.apply_chat_template(self.history, tokenize=False, add_generation_prompt=True)
+        inputs = self.tokenizer([text], return_tensors='pt').to(self.device)
+
+        # 生成响应
+        attention_mask = torch.ones(inputs.input_ids.shape, dtype=torch.long, device=self.device)
+        generated_ids = self.model.generate(
+            inputs.input_ids,
+            max_new_tokens=max_length,
+            attention_mask=attention_mask,
+            pad_token_id=self.tokenizer.eos_token_id,
+        )
+
+        generated_response_ids = generated_ids[:, inputs.input_ids.shape[1]:]
+        response = self.tokenizer.decode(generated_response_ids[0], skip_special_tokens=True)
+        response = process_logical_form(response)
+        response = normed_process_webqsp(response)
+
+        # 将模型响应加入历史
+        self.add_to_history(response, sender="Llama")
+
+        return response
+
 
 
 def get_model_prompt(nlp, corpus, question, bm25_train_full, que_to_s_dict_train, retrieve_number=100):
